@@ -13,7 +13,70 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct event* readev = NULL;
+#define _MAX_CLIENT_ 1024
+
+struct event* readev = NULL;  //造成内存泄漏
+
+typedef struct Fd_EventMap{
+    int fd; //文件描述符
+    struct event *ev;   //对应事件
+}fdEvent;
+
+fdEvent mfdEvent[_MAX_CLIENT_];
+
+void initEventArray()
+{
+    int i;
+    for(i=0;i<_MAX_CLIENT_;i++)
+    {
+        mfdEvent[i].fd = -1;
+        mfdEvent[i].ev = NULL;
+    }
+}
+
+int addEvent(int fd,struct event* ev)
+{
+    int i;
+    for(i=0;i<_MAX_CLIENT_;++i)
+    {
+        if(mfdEvent[i].fd <0)
+        {
+            break;
+        }
+    }
+    if(i == _MAX_CLIENT_)
+    {
+        printf("too many client...\n");
+        return -1;
+    }
+    mfdEvent[i].fd = fd;
+    mfdEvent[i].ev = ev;
+    return 0;
+}
+
+void destroyEventArray()
+{
+    int i;
+    for(i=0;i<_MAX_CLIENT_;i++)
+    {
+        if(mfdEvent[i].fd > 0&&mfdEvent[i].ev)
+        {
+            close(mfdEvent[i].fd);
+            mfdEvent[i].fd= -1;
+            event_free(mfdEvent[i].ev);
+        }
+    }
+}
+
+struct event* getEventByFd(int fd)
+{
+    int i;
+    for(i = 0;i<_MAX_CLIENT_;++i)
+    {
+        if(mfdEvent[i].fd == fd)
+            return mfdEvent[i].ev;
+    }
+}
 
 void readcb(evutil_socket_t fd,short events,void* arg)
 {
@@ -22,7 +85,7 @@ void readcb(evutil_socket_t fd,short events,void* arg)
     if(ret <=0 )
     {
         close(fd);
-        event_del(readev);
+        event_del(getEventByFd(fd));
     }
     else
     {
@@ -43,6 +106,7 @@ void conncb(evutil_socket_t fd,short events,void* arg)
         //应该继续监听
         readev = event_new(base,cfd,EV_READ|EV_PERSIST,readcb,base);
         event_add(readev,NULL);
+        addEvent(cfd,readev);
     }
 }
 
@@ -65,6 +129,8 @@ int main()
         exit(-1);
     }
 
+    //初始化事件数组
+    initEventArray();
     //监听
     listen(lfd,128);
     //创建事件-设置回掉
@@ -76,7 +142,8 @@ int main()
 
     //释放根结点
     event_free(connev);
-    event_free(readev);
+    //event_free(readev);
+    destroyEventArray();
     event_base_free(base);
 
 
